@@ -1,0 +1,16 @@
+[project]
+name = "gpp"
+version = "0.1.0"
+description = "Git productivity tools"
+requires-python = ">=3.11"
+dependencies = [
+    "typer",
+    "rich",
+]
+
+[project.scripts]
+ghg = "gpp.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
