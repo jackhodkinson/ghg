@@ -5,7 +5,7 @@ help:
 	@echo "  install      - uv tool install ."
 	@echo "  dev-install  - uv tool install --editable ."
 	@echo "  update       - uv tool install --upgrade ."
-	@echo "  uninstall    - uv tool uninstall gpp (package name)"
+	@echo "  uninstall    - uv tool uninstall ghg"
 	@echo "  which        - prints uv tool dir and which ghg"
 
 install:
@@ -18,7 +18,7 @@ update:
 	uv tool install --upgrade . || uv tool install .
 
 uninstall:
-	uv tool uninstall gpp
+	uv tool uninstall ghg
 
 which:
 	uv tool dir || true

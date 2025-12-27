@@ -69,7 +69,7 @@ def move(branch_name: str):
     
     if has_changes:
         typer.echo("Stashing current changes...")
-        exit_code, _, stderr = run_git_command(["git", "stash", "push", "-m", f"gpp move to {branch_name}"])
+        exit_code, _, stderr = run_git_command(["git", "stash", "push", "-m", f"ghg move to {branch_name}"])
         if exit_code != 0:
             typer.echo(f"Error stashing changes: {stderr}", err=True)
             raise typer.Exit(1)

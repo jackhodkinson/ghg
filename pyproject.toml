@@ -1,5 +1,5 @@
 [project]
-name = "gpp"
+name = "ghg"
 version = "0.1.0"
 description = "Git productivity tools"
 requires-python = ">=3.11"
@@ -9,7 +9,7 @@ dependencies = [
 ]
 
 [project.scripts]
-ghg = "gpp.main:main"
+ghg = "ghg.main:main"
 
 [build-system]
 requires = ["hatchling"]
