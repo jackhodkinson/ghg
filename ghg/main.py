@@ -597,13 +597,16 @@ def wt_create(
         typer.echo(f"Error creating worktree: {stderr}", err=True)
         raise typer.Exit(1)
 
-    main_envrc = main_worktree / ".envrc"
-    if main_envrc.exists():
-        worktree_envrc = worktree_path / ".envrc"
-        relative_envrc = Path("..") / repo_name / ".envrc"
-        worktree_envrc.symlink_to(relative_envrc)
-        if not shell:
-            typer.echo(f"Created .envrc symlink -> {relative_envrc}")
+    # Symlink files that should be shared across worktrees
+    files_to_symlink = [".envrc", "CLAUDE.local.md"]
+    for filename in files_to_symlink:
+        main_file = main_worktree / filename
+        if main_file.exists():
+            worktree_file = worktree_path / filename
+            relative_path = Path("..") / repo_name / filename
+            worktree_file.symlink_to(relative_path)
+            if not shell:
+                typer.echo(f"Created {filename} symlink -> {relative_path}")
 
     if shell:
         typer.echo(f'cd "{worktree_path}" && uv sync')
