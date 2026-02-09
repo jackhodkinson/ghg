@@ -104,7 +104,7 @@ ghg merge "#123"
 
 ### `ghg wt create <branch>`
 
-Create a git worktree as a sibling directory with `.envrc` symlinked.
+Create a git worktree as a sibling directory with shared files symlinked (`.envrc`, `CLAUDE.local.md`, `.projects`, and any `local-*` Claude skills).
 
 ```bash
 # Creates ../repo-feature-xyz/
@@ -120,6 +120,18 @@ eval "$(ghg wt create feature-xyz --shell)"
 Shell alias for convenience:
 ```bash
 gwta() { eval "$(ghg wt create "$1" --shell)"; }
+```
+
+### `ghg wt next <branch>`
+
+Switch a worktree to a new branch from latest `origin/master`. Run this from within a worktree after your PR has been squash-merged. Also sets up any missing symlinks for worktrees created before symlink support.
+
+```bash
+# Start next piece of work in the same worktree
+ghg wt next new-feature
+
+# Keep the old branch around
+ghg wt next new-feature --keep-branch
 ```
 
 ### `ghg wt delete <branch>`
@@ -138,7 +150,7 @@ ghg wt delete feature-xyz --force
 
 ### `ghg wt list`
 
-List worktrees.
+List worktrees with name, branch (if different from name), and path.
 
 ```bash
 # ghg-managed worktrees only

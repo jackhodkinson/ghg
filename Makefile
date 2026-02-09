@@ -15,7 +15,7 @@ dev-install:
 	uv tool install --editable .
 
 update:
-	uv tool install --upgrade . || uv tool install .
+	uv tool install --reinstall --upgrade . || uv tool install .
 
 uninstall:
 	uv tool uninstall ghg

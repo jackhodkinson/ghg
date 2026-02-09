@@ -557,6 +557,33 @@ def get_main_worktree() -> Path:
     return Path.cwd()
 
 
+def setup_worktree_symlinks(worktree_path: Path, main_worktree: Path, repo_name: str, quiet: bool = False) -> None:
+    """Create symlinks for shared files/dirs and local skills in a worktree."""
+    # Symlink files/dirs that should be shared across worktrees
+    files_to_symlink = [".envrc", "CLAUDE.local.md", ".projects"]
+    for filename in files_to_symlink:
+        main_file = main_worktree / filename
+        worktree_file = worktree_path / filename
+        if main_file.exists() and not worktree_file.exists():
+            relative_path = Path("..") / repo_name / filename
+            worktree_file.symlink_to(relative_path)
+            if not quiet:
+                typer.echo(f"Created {filename} symlink -> {relative_path}")
+
+    # Symlink local-* skills from .claude/skills/
+    main_skills = main_worktree / ".claude" / "skills"
+    if main_skills.is_dir():
+        worktree_skills = worktree_path / ".claude" / "skills"
+        for skill_dir in sorted(main_skills.iterdir()):
+            if skill_dir.is_dir() and skill_dir.name.startswith("local-"):
+                target = worktree_skills / skill_dir.name
+                if not target.exists():
+                    relative_path = Path("..") / ".." / ".." / repo_name / ".claude" / "skills" / skill_dir.name
+                    target.symlink_to(relative_path)
+                    if not quiet:
+                        typer.echo(f"Created skill symlink: {skill_dir.name}")
+
+
 @wt_app.command("create")
 def wt_create(
     branch: str = typer.Argument(..., help="Branch name for the worktree"),
@@ -564,9 +591,10 @@ def wt_create(
     shell: bool = typer.Option(False, "--shell", "-s", help="Output shell commands to eval (for cd and uv sync)"),
 ):
     """
-    Create a git worktree as a sibling directory with .envrc symlinked.
+    Create a git worktree as a sibling directory with shared files symlinked.
 
-    Creates ../repo-branch/ with a symlink to ../repo/.envrc
+    Creates ../repo-branch/ with symlinks to .envrc, CLAUDE.local.md, .projects,
+    and any local-* Claude skills from the main worktree.
 
     Use with --shell to cd into the directory and run uv sync:
         eval "$(ghg wt create feature-xyz --shell)"
@@ -597,16 +625,7 @@ def wt_create(
         typer.echo(f"Error creating worktree: {stderr}", err=True)
         raise typer.Exit(1)
 
-    # Symlink files that should be shared across worktrees
-    files_to_symlink = [".envrc", "CLAUDE.local.md"]
-    for filename in files_to_symlink:
-        main_file = main_worktree / filename
-        if main_file.exists():
-            worktree_file = worktree_path / filename
-            relative_path = Path("..") / repo_name / filename
-            worktree_file.symlink_to(relative_path)
-            if not shell:
-                typer.echo(f"Created {filename} symlink -> {relative_path}")
+    setup_worktree_symlinks(worktree_path, main_worktree, repo_name, quiet=shell)
 
     if shell:
         typer.echo(f'cd "{worktree_path}" && uv sync')
@@ -673,6 +692,123 @@ def wt_delete(
     typer.echo(f"✅ Worktree removed")
 
 
+def get_current_worktree_branch() -> Optional[str]:
+    """Get the branch name of the current worktree (if in a worktree)."""
+    exit_code, stdout, _ = run_git_command(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+    if exit_code != 0:
+        return None
+    return stdout.strip() or None
+
+
+def is_in_worktree() -> bool:
+    """Check if the current directory is a non-main worktree."""
+    exit_code, stdout, _ = run_git_command(["git", "rev-parse", "--git-common-dir"])
+    if exit_code != 0:
+        return False
+    exit_code2, stdout2, _ = run_git_command(["git", "rev-parse", "--git-dir"])
+    if exit_code2 != 0:
+        return False
+    # In the main worktree, --git-dir is .git and --git-common-dir is .git
+    # In a linked worktree, --git-dir is something like ../<main>/.git/worktrees/<name>
+    return stdout.strip() != stdout2.strip()
+
+
+@wt_app.command("next")
+def wt_next(
+    branch: str = typer.Argument(..., help="New branch name to create from origin/master"),
+    keep_branch: bool = typer.Option(False, "--keep-branch", "-k", help="Keep the old branch"),
+):
+    """
+    Switch a worktree to a new branch based on latest origin/master.
+
+    Run this from within a worktree after your PR has been merged. It will:
+    1. Check for uncommitted changes
+    2. Fetch origin/master
+    3. Create a new branch from origin/master
+    4. Delete the old branch (unless --keep-branch)
+    """
+    check_git_repo()
+
+    if not is_in_worktree():
+        typer.echo("Error: Not in a worktree. Run this from within a worktree directory.", err=True)
+        raise typer.Exit(1)
+
+    # Check for uncommitted changes
+    exit_code, status_output, stderr = run_git_command(["git", "status", "--porcelain"])
+    if exit_code != 0:
+        typer.echo(f"Error checking git status: {stderr}", err=True)
+        raise typer.Exit(1)
+
+    if status_output.strip():
+        typer.echo("Error: You have uncommitted changes. Commit or stash them first.", err=True)
+        raise typer.Exit(1)
+
+    old_branch = get_current_worktree_branch()
+    if not old_branch:
+        typer.echo("Error: Could not determine current branch.", err=True)
+        raise typer.Exit(1)
+
+    if old_branch == branch:
+        typer.echo(f"Error: Already on branch '{branch}'.", err=True)
+        raise typer.Exit(1)
+
+    # Fetch latest master
+    typer.echo("Fetching origin/master...")
+    exit_code, _, stderr = run_git_command(["git", "fetch", "origin", "master"])
+    if exit_code != 0:
+        typer.echo(f"Error fetching origin: {stderr}", err=True)
+        raise typer.Exit(1)
+
+    # Create new branch from origin/master and switch to it
+    typer.echo(f"Creating branch '{branch}' from origin/master...")
+    exit_code, _, stderr = run_git_command(["git", "checkout", "-b", branch, "origin/master"])
+    if exit_code != 0:
+        typer.echo(f"Error creating branch: {stderr}", err=True)
+        raise typer.Exit(1)
+
+    # Delete old branch
+    if not keep_branch:
+        typer.echo(f"Deleting old branch '{old_branch}'...")
+        exit_code, _, stderr = run_git_command(["git", "branch", "-D", old_branch])
+        if exit_code != 0:
+            typer.echo(f"Warning: Could not delete old branch: {stderr}", err=True)
+        else:
+            typer.echo(f"Deleted branch '{old_branch}'")
+
+    # Ensure symlinks are in place (fixes worktrees created before symlink support)
+    repo_name = get_repo_name()
+    main_worktree = get_main_worktree()
+    setup_worktree_symlinks(Path.cwd(), main_worktree, repo_name)
+
+    typer.echo(f"✅ Switched to new branch '{branch}' from origin/master")
+
+
+def parse_worktree_list() -> list[dict]:
+    """Parse `git worktree list --porcelain` into a list of worktree info dicts."""
+    exit_code, stdout, _ = run_git_command(["git", "worktree", "list", "--porcelain"])
+    if exit_code != 0 or not stdout:
+        return []
+
+    worktrees = []
+    current: dict = {}
+    for line in stdout.split("\n"):
+        if line.startswith("worktree "):
+            if current:
+                worktrees.append(current)
+            current = {"path": Path(line.split(" ", 1)[1])}
+        elif line.startswith("HEAD "):
+            current["commit"] = line.split(" ", 1)[1][:10]
+        elif line.startswith("branch "):
+            current["branch"] = line.split("/")[-1]
+        elif line.strip() == "detached":
+            current["branch"] = "(detached)"
+        elif line.strip() == "prunable":
+            current["prunable"] = True
+    if current:
+        worktrees.append(current)
+    return worktrees
+
+
 @wt_app.command("list")
 def wt_list(
     all_worktrees: bool = typer.Option(False, "--all", "-a", help="Show all worktrees, not just ghg-managed ones"),
@@ -684,40 +820,43 @@ def wt_list(
     """
     check_git_repo()
 
-    exit_code, stdout, stderr = run_git_command(["git", "worktree", "list"])
-    if exit_code != 0:
-        typer.echo(f"Error listing worktrees: {stderr}", err=True)
-        raise typer.Exit(1)
-
-    if not stdout:
+    worktrees = parse_worktree_list()
+    if not worktrees:
         typer.echo("No worktrees found")
-        return
-
-    if all_worktrees:
-        typer.echo(stdout)
         return
 
     repo_name = get_repo_name()
     main_worktree = get_main_worktree()
     expected_parent = main_worktree.parent
 
-    filtered_lines = []
-    for line in stdout.strip().split("\n"):
-        if not line:
-            continue
-        worktree_path = Path(line.split()[0])
-        is_main = worktree_path == main_worktree
-        is_ghg_managed = (
-            worktree_path.parent == expected_parent
-            and worktree_path.name.startswith(f"{repo_name}-")
-        )
-        if is_main or is_ghg_managed:
-            filtered_lines.append(line)
+    if not all_worktrees:
+        worktrees = [
+            wt for wt in worktrees
+            if wt["path"] == main_worktree
+            or (wt["path"].parent == expected_parent and wt["path"].name.startswith(f"{repo_name}-"))
+        ]
 
-    if filtered_lines:
-        typer.echo("\n".join(filtered_lines))
-    else:
+    if not worktrees:
         typer.echo("No ghg-managed worktrees found (use --all to see all worktrees)")
+        return
+
+    console = Console(highlight=False)
+    for i, wt in enumerate(worktrees):
+        path = wt["path"]
+        if path == main_worktree:
+            name = repo_name
+        else:
+            name = path.name.removeprefix(f"{repo_name}-")
+        branch = wt.get("branch", "???")
+        commit = wt.get("commit", "???")
+
+        if branch != name:
+            console.print(f"[bold white]{name}[/]  [green]{branch}[/]")
+        else:
+            console.print(f"[bold white]{name}[/]")
+        console.print(f"  [dim]{path}[/]")
+        if i < len(worktrees) - 1:
+            console.print()
 
 
 def main() -> None:
